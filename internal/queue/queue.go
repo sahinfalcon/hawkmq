@@ -4,7 +4,7 @@ import "sync"
 
 type Queue struct {
 	messages []string
-	mu       sync.Mutex
+	mu       sync.RWMutex
 }
 
 func NewQueue() *Queue {
