@@ -27,3 +27,9 @@ func (q *Queue) Dequeue() (string, bool) {
 	q.messages = q.messages[1:]
 	return msg, true
 }
+
+func (q *Queue) Size() int {
+	q.mu.Lock()
+	defer q.mu.Unlock()
+	return len(q.messages)
+}
