@@ -40,7 +40,7 @@ go run cmd/client/main.go publish "simon says"
 go run cmd/client/main.go consume
 ```
 
-Run tests (not added yet):
+Run tests:
 ```sh
 go test ./...
 ```
