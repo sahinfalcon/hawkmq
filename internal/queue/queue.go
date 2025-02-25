@@ -3,6 +3,7 @@ package queue
 import (
 	"fmt"
 	"os"
+	"path/filepath"
 	"sync"
 	"time"
 )
@@ -12,20 +13,28 @@ type Queue struct {
 	mu            sync.RWMutex
 	logFile       *os.File
 	enableLogging bool
+	logPath       string
 }
 
 func NewQueue() *Queue {
-	return &Queue{messages: []string{}, enableLogging: false}
+	return &Queue{
+		messages:      []string{},
+		enableLogging: false,
+	}
 }
 
 func (q *Queue) EnableLogging(logPath string) error {
 	q.mu.Lock()
 	defer q.mu.Unlock()
 
-	dir := logPath[:len(logPath)-len("/queue.log")]
+	q.logPath = logPath
+
+	dir := filepath.Dir(logPath)
 	if err := os.MkdirAll(dir, 0755); err != nil {
 		return fmt.Errorf("failure in creating log directory: %w", err)
 	}
+
+	fmt.Printf("Opening log file at: %s\n", logPath)
 
 	file, err := os.OpenFile(logPath, os.O_CREATE|os.O_APPEND|os.O_WRONLY, 0644)
 	if err != nil {
@@ -35,16 +44,46 @@ func (q *Queue) EnableLogging(logPath string) error {
 	q.logFile = file
 	q.enableLogging = true
 
-	for _, msg := range q.messages {
-		fmt.Fprintf(q.logFile, "ENQUEUE %s %s\n", time.Now().Format(time.RFC3339), msg)
+	timestamp := time.Now().Format(time.RFC3339)
+	startupMsg := fmt.Sprintf("STARTUP %s Queue logging enabled\n", timestamp)
+	if _, err := q.logFile.WriteString(startupMsg); err != nil {
+		return fmt.Errorf("failed to write startup message: %w", err)
 	}
-	return nil
+
+	if err := q.logFile.Sync(); err != nil {
+		return fmt.Errorf("failed to sync log file: %w", err)
+	}
+
+	fmt.Printf("Logging enabled successfully\n")
+
+	for _, msg := range q.messages {
+		logMsg := fmt.Sprintf("ENQUEUE %s %s\n", time.Now().Format(time.RFC3339), msg)
+		if _, err := q.logFile.WriteString(logMsg); err != nil {
+			return fmt.Errorf("failed to log existing message: %w", err)
+		}
+	}
+
+	return q.logFile.Sync()
 }
 
 func (q *Queue) Enqueue(msg string) {
 	q.mu.Lock()
 	defer q.mu.Unlock()
+
 	q.messages = append(q.messages, msg)
+
+	if q.enableLogging && q.logFile != nil {
+		logMsg := fmt.Sprintf("ENQUEUE %s %s\n", time.Now().Format(time.RFC3339), msg)
+		_, err := q.logFile.WriteString(logMsg)
+		if err != nil {
+			fmt.Printf("Error writing to log file: %v\n", err)
+			return
+		}
+
+		if err := q.logFile.Sync(); err != nil {
+			fmt.Printf("Error syncing log file: %v\n", err)
+		}
+	}
 }
 
 func (q *Queue) Dequeue() (string, bool) {
@@ -55,12 +94,26 @@ func (q *Queue) Dequeue() (string, bool) {
 	}
 	msg := q.messages[0]
 	q.messages = q.messages[1:]
+
+	if q.enableLogging && q.logFile != nil {
+		logMsg := fmt.Sprintf("DEQUEUE %s %s\n", time.Now().Format(time.RFC3339), msg)
+		_, err := q.logFile.WriteString(logMsg)
+		if err != nil {
+			fmt.Printf("Error writing to log file: %v\n", err)
+			return msg, true
+		}
+
+		if err := q.logFile.Sync(); err != nil {
+			fmt.Printf("Error syncing log file: %v\n", err)
+		}
+	}
+
 	return msg, true
 }
 
 func (q *Queue) Size() int {
-	q.mu.Lock()
-	defer q.mu.Unlock()
+	q.mu.RLock()
+	defer q.mu.RUnlock()
 	return len(q.messages)
 }
 
@@ -69,6 +122,11 @@ func (q *Queue) Close() error {
 	defer q.mu.Unlock()
 
 	if q.logFile != nil {
+		timestamp := time.Now().Format(time.RFC3339)
+		shutdownMsg := fmt.Sprintf("SHUTDOWN %s Queue closed\n", timestamp)
+		q.logFile.WriteString(shutdownMsg)
+		q.logFile.Sync()
+
 		return q.logFile.Close()
 	}
 	return nil
