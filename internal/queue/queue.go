@@ -1,9 +1,11 @@
 package queue
 
 import (
+	"bufio"
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 	"sync"
 	"time"
 )
@@ -64,6 +66,60 @@ func (q *Queue) EnableLogging(logPath string) error {
 	}
 
 	return q.logFile.Sync()
+}
+
+func (q *Queue) RecoverFromLog(logPath string) error {
+	q.mu.Lock()
+	defer q.mu.Unlock()
+
+	q.logPath = logPath
+
+	file, err := os.OpenFile(logPath, os.O_CREATE|os.O_RDONLY, 0644)
+	if err != nil {
+		return fmt.Errorf("failure opening log file for recovery: %w", err)
+	}
+	defer file.Close()
+
+	q.messages = []string{}
+
+	scanner := bufio.NewScanner(file)
+	for scanner.Scan() {
+		line := scanner.Text()
+		parts := strings.SplitN(line, " ", 3)
+		if len(parts) < 3 {
+			continue
+		}
+
+		operation := parts[0]
+		//timestamp := parts[1]
+		message := parts[2]
+
+		switch operation {
+		case "ENQUEUE":
+			q.messages = append(q.messages, message)
+		case "DEQUEUE":
+			for i, msg := range q.messages {
+				if msg == message {
+					q.messages = append(q.messages[:i], q.messages[i+1:]...)
+					break
+				}
+			}
+		}
+	}
+
+	if err := scanner.Err(); err != nil {
+		return fmt.Errorf("error reading log file: %w", err)
+	}
+
+	appendFile, err := os.OpenFile(logPath, os.O_CREATE|os.O_APPEND|os.O_WRONLY, 0644)
+	if err != nil {
+		return fmt.Errorf("failure reopening log file for appending: %w", err)
+	}
+
+	q.logFile = appendFile
+	q.enableLogging = true
+
+	return nil
 }
 
 func (q *Queue) Enqueue(msg string) {
