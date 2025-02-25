@@ -25,6 +25,8 @@ func main() {
 		fmt.Fprintln(conn, "PUBLISH "+os.Args[2])
 	} else if action == "consume" {
 		fmt.Fprintln(conn, "CONSUME")
+	} else if action == "size" {
+		fmt.Fprintln(conn, "SIZE")
 	}
 
 	response, _ := bufio.NewReader(conn).ReadString('\n')
