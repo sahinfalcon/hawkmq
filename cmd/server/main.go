@@ -1,4 +1,3 @@
-// cmd/server/main.go
 package main
 
 import (
@@ -18,9 +17,9 @@ import (
 )
 
 var (
-	port     = flag.Int("port", 8080, "Server port")
-	dataDir  = flag.String("data-dir", "./data", "Data directory")
-	logQueue = flag.Bool("log", false, "Enable queue operation logging")
+	port       = flag.Int("port", 8080, "Server port")
+	dataDir    = flag.String("data-dir", "./data", "Data directory")
+	persistent = flag.Bool("persistent", true, "Enable queue persistence")
 )
 
 var q = queue.NewQueue()
@@ -51,16 +50,30 @@ func handleConnection(conn net.Conn) {
 func main() {
 	flag.Parse()
 
-	if *logQueue {
+	if *persistent {
 		if err := os.MkdirAll(*dataDir, 0755); err != nil {
 			log.Fatalf("Failed to create data directory: %v", err)
 		}
 
 		logPath := filepath.Join(*dataDir, "queue.log")
+		if _, err := os.Stat(logPath); err == nil {
+			log.Printf("Found existing log file, recovering queue state...")
+			if err := q.RecoverFromLog(logPath); err != nil {
+				log.Fatalf("Failure recovering from log: %v", err)
+			}
+			log.Printf("Successfully recovered queue with %d messages", q.Size())
+		} else {
+			log.Printf("No existing log found, starting fresh queue with logging")
+			if err := q.EnableLogging(logPath); err != nil {
+				log.Fatalf("Failed to enable logging: %v", err)
+			}
+		}
 		if err := q.EnableLogging(logPath); err != nil {
 			log.Fatalf("Failed to enable logging: %v", err)
 		}
-		log.Printf("Queue operations will be logged to %s", logPath)
+		log.Printf("Queue persistence enabled, operations will be logged to %s", logPath)
+	} else {
+		log.Printf("Queue persistence disabled, queue will be in-memory only")
 	}
 
 	stop := make(chan struct{})
